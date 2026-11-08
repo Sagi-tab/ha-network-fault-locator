@@ -8,7 +8,10 @@
     "@sagi-tab"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
   "documentation": "https://github.com/sagi-tab/ha-network-fault-locator",
   "integration_type": "service",
   "iot_class": "local_polling",
@@ -19,5 +22,5 @@
   "requirements": [
     "icmplib>=3.0.4"
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

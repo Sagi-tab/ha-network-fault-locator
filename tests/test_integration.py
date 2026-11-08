@@ -330,3 +330,15 @@ async def test_diagnostics_redact_isp_hop(hass: HomeAssistant, net: FakeNetwork)
     text = str(diag)
     assert "203.0.113.1" not in text and "notify.phone" not in text
     assert diag["last_check"]["isp_hop_address"] == "**REDACTED**"
+
+
+async def test_card_is_served_and_registered(hass: HomeAssistant, net: FakeNetwork, frontend) -> None:
+    """The dashboard card ships with the integration: no separate frontend install."""
+    from pathlib import Path
+
+    await _setup(hass)
+    (paths,), _ = frontend["http"].async_register_static_paths.call_args
+    assert paths[0].url_path == "/network_fault_locator/network-fault-locator-card.js"
+    assert Path(paths[0].path).is_file()
+    (_, url), _ = frontend["extra_js"].call_args
+    assert url.startswith("/network_fault_locator/network-fault-locator-card.js?v=")

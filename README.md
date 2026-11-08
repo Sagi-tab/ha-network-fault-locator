@@ -111,23 +111,33 @@ The notification is sent after the incident, because during an internet outage i
 get out. To react while an incident is ongoing (e.g. turn a light red), trigger on the
 status sensor or the `incident_started` event.
 
-## Dashboard example
+## Dashboard card
+
+The integration ships its own card. It's loaded automatically, so there's nothing else
+to install. Add it from **Edit dashboard → Add card → Network Fault Locator**, or in YAML:
 
 ```yaml
-type: history-graph
-title: Network
-hours_to_show: 24
-entities:
-  - entity: sensor.network_fault_locator_status
-  - entity: sensor.network_fault_locator_router_packet_loss
-  - entity: sensor.network_fault_locator_internet_packet_loss
-  - entity: sensor.network_fault_locator_router_latency
-  - entity: sensor.network_fault_locator_internet_latency
+type: custom:network-fault-locator-card
+entity: sensor.network_fault_locator_status
+hours_to_show: 24            # optional, default 24
+show_device_latency: false   # optional, latency lines for your local devices
+title: Network               # optional
 ```
+
+Everything is in **one chart on one time axis**:
+
+- a status strip on top, colored by the verdict;
+- incidents shaded behind the lines in the color of the link that failed: home network
+  (orange), local device (purple), ISP (red), DNS (blue); packet-loss incidents are lighter;
+- **packet loss** of the router, the internet and each watched device as solid lines (left axis, %);
+- **latency** as dashed lines in the same color as the matching link (right axis, ms);
+- hover (or tap) for every value at that moment; click a legend entry to hide or show a line.
+
+It only needs the Status sensor; the related sensors are found through the device.
 
 ## Requirements and limitations
 
-- Home Assistant 2025.3 or newer. Home Assistant OS / Container run as root, which the traceroute needs (raw sockets). Without it the integration still works but reports `isp_down` instead of telling `isp_line` and `isp_upstream` apart.
+- Home Assistant 2025.3 or newer. The card uses only the built-in frontend (no extra cards or libraries). Home Assistant OS / Container run as root, which the traceroute needs (raw sockets). Without it the integration still works but reports `isp_down` instead of telling `isp_line` and `isp_upstream` apart.
 - Run Home Assistant **wired** to the router; otherwise its own Wi-Fi link becomes part of every measurement.
 - Pinging a mesh node tests the link to it (wired or wireless backhaul) and the node itself, not the Wi-Fi between the node and its clients.
 - The DNS check uses Home Assistant's resolver, which may cache answers for a few minutes.
@@ -166,6 +176,8 @@ downloads redact the ISP first hop and the notify target.
   is parsed by `icmplib`; someone on your LAN could spoof replies and fake a result, but such an
   attacker could already disrupt your network directly.
 - CI uses a read-only token and third-party actions pinned to commit SHAs.
+- The dashboard card is a static file with no secrets, served like the rest of the frontend. It reads
+  history through the logged-in user's own connection and escapes all names and states it displays.
 
 Found a security problem? Please open a [private security advisory](https://github.com/sagi-tab/ha-network-fault-locator/security/advisories/new) instead of a public issue.
 
