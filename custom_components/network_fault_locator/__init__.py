@@ -1,4 +1,4 @@
-"""Network Fault Locator: tells whether network trouble is in the home network, the mesh or the ISP."""
+"""Network Fault Locator: tells whether network trouble is in the home network, a local device or the ISP."""
 
 from __future__ import annotations
 

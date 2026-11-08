@@ -9,10 +9,10 @@
           "isp_upstream": "mdi:web-off",
           "isp_down": "mdi:web-off",
           "dns": "mdi:dns",
-          "mesh_down": "mdi:access-point-off",
           "home_degraded": "mdi:lan-pending",
-          "mesh_degraded": "mdi:access-point-network-off",
-          "isp_degraded": "mdi:web-remove"
+          "isp_degraded": "mdi:web-remove",
+          "device_down": "mdi:access-point-off",
+          "device_degraded": "mdi:access-point-network-off"
         }
       },
       "router_loss": {
@@ -27,10 +27,10 @@
       "isp_first_hop_loss": {
         "default": "mdi:router-network"
       },
-      "access_point_loss": {
+      "device_loss": {
         "default": "mdi:access-point-network"
       },
-      "access_point_latency": {
+      "device_latency": {
         "default": "mdi:access-point"
       }
     },
@@ -44,7 +44,7 @@
       "dns": {
         "default": "mdi:dns"
       },
-      "access_point": {
+      "device": {
         "default": "mdi:access-point"
       }
     }

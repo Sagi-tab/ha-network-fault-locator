@@ -2,12 +2,12 @@
 
 Network path, as seen from Home Assistant:
 
-    HA -> router -> access points (optional, mesh)
+    HA -> router -> local devices you choose (access points, switches, ...)
                  -> ISP first hop (hop 2, found by traceroute) -> internet targets (+ DNS)
 
 A failure (or loss) is attributed to the first link on that path where it appears.
-Loss to an access point or the internet only counts beyond the loss already seen to
-the router, so a problem right next to Home Assistant is not blamed on the mesh or ISP.
+Loss to a local device or the internet only counts beyond the loss already seen to
+the router, so a problem right next to Home Assistant is not blamed on them.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ ISP_LINE = "isp_line"
 ISP_UPSTREAM = "isp_upstream"
 ISP_DOWN = "isp_down"
 DNS = "dns"
-MESH_DOWN = "mesh_down"
+DEVICE_DOWN = "device_down"
 HOME_DEGRADED = "home_degraded"
-MESH_DEGRADED = "mesh_degraded"
+DEVICE_DEGRADED = "device_degraded"
 ISP_DEGRADED = "isp_degraded"
 
 ISSUES: tuple[str, ...] = (
@@ -32,9 +32,9 @@ ISSUES: tuple[str, ...] = (
     ISP_UPSTREAM,
     ISP_DOWN,
     DNS,
-    MESH_DOWN,
+    DEVICE_DOWN,
     HOME_DEGRADED,
-    MESH_DEGRADED,
+    DEVICE_DEGRADED,
     ISP_DEGRADED,
 )
 OK = "ok"
@@ -45,9 +45,9 @@ ISSUE_LABELS: dict[str, str] = {
     ISP_UPSTREAM: "ISP backbone",
     ISP_DOWN: "ISP / internet down",
     DNS: "DNS",
-    MESH_DOWN: "Mesh - access point unreachable",
+    DEVICE_DOWN: "Local device unreachable",
     HOME_DEGRADED: "Home network packet loss",
-    MESH_DEGRADED: "Mesh - access point packet loss",
+    DEVICE_DEGRADED: "Local device packet loss",
     ISP_DEGRADED: "ISP packet loss",
 }
 
@@ -115,12 +115,12 @@ class Snapshot:
     """Everything one check measured, plus the windowed loss figures."""
 
     router: ProbeResult
-    access_points: dict[str, ProbeResult]  # label -> result
+    devices: dict[str, ProbeResult]  # label -> result
     internet: list[ProbeResult]
     dns_ok: bool
     hop: HopResult | None  # None when traceroute is unavailable
     router_loss: float | None = None
-    access_point_loss: dict[str, float | None] = field(default_factory=dict)
+    device_loss: dict[str, float | None] = field(default_factory=dict)
     internet_loss: float | None = None
 
     @property
@@ -138,8 +138,8 @@ class Snapshot:
 @dataclass(frozen=True)
 class Verdict:
     issues: list[str]
-    access_points_down: list[str]
-    access_points_degraded: list[str]
+    devices_down: list[str]
+    devices_degraded: list[str]
 
     @property
     def status(self) -> str:
@@ -150,7 +150,7 @@ def record_samples(
     snapshot: Snapshot,
     now: float,
     router_window: LossWindow,
-    ap_windows: dict[str, LossWindow],
+    device_windows: dict[str, LossWindow],
     internet_window: LossWindow,
 ) -> None:
     """Add this check to the loss windows and fill in the windowed loss figures.
@@ -161,16 +161,16 @@ def record_samples(
     """
     if snapshot.router.alive:
         router_window.add(now, snapshot.router.sent, snapshot.router.received)
-        for label, result in snapshot.access_points.items():
-            if result.alive and label in ap_windows:
-                ap_windows[label].add(now, result.sent, result.received)
+        for label, result in snapshot.devices.items():
+            if result.alive and label in device_windows:
+                device_windows[label].add(now, result.sent, result.received)
         best = snapshot.best_internet
         if best is not None and best.alive:
             internet_window.add(now, best.sent, best.received)
 
     snapshot.router_loss = router_window.loss(now)
-    snapshot.access_point_loss = {
-        label: window.loss(now) for label, window in ap_windows.items()
+    snapshot.device_loss = {
+        label: window.loss(now) for label, window in device_windows.items()
     }
     snapshot.internet_loss = internet_window.loss(now)
 
@@ -192,9 +192,9 @@ def evaluate(snapshot: Snapshot, threshold: float) -> Verdict:
     elif not snapshot.dns_ok:
         issues.append(DNS)
 
-    down = [label for label, r in snapshot.access_points.items() if not r.alive]
+    down = [label for label, r in snapshot.devices.items() if not r.alive]
     if down:
-        issues.append(MESH_DOWN)
+        issues.append(DEVICE_DOWN)
 
     base = snapshot.router_loss or 0.0
     if base >= threshold:
@@ -202,11 +202,11 @@ def evaluate(snapshot: Snapshot, threshold: float) -> Verdict:
 
     degraded = [
         label
-        for label, loss in snapshot.access_point_loss.items()
+        for label, loss in snapshot.device_loss.items()
         if loss is not None and label not in down and loss - base >= threshold
     ]
     if degraded:
-        issues.append(MESH_DEGRADED)
+        issues.append(DEVICE_DEGRADED)
 
     if (
         internet
@@ -223,7 +223,7 @@ class IncidentTracker:
     """Tracks one incident: from the first issue until everything is OK again.
 
     Each issue keeps the first and last time it was active, so a report can say
-    e.g. "ISP line: 4 min from 23:16; mesh packet loss: 16 min from 23:18".
+    e.g. "ISP line: 4 min from 23:16; device packet loss: 16 min from 23:18".
     """
 
     def __init__(self) -> None:
@@ -281,18 +281,23 @@ class IncidentTracker:
     @classmethod
     def from_dict(cls, data: dict | None) -> IncidentTracker:
         tracker = cls()
-        if data:
-            tracker.since = data.get("since")
+        if not isinstance(data, dict):
+            return tracker
+        try:
+            since = data.get("since")
+            tracker.since = float(since) if since is not None else None
             tracker.issues = {
                 k: [float(v[0]), float(v[1])]
                 for k, v in (data.get("issues") or {}).items()
                 if k in ISSUES
             }
             tracker.active = [c for c in data.get("active") or [] if c in tracker.issues]
+        except (TypeError, ValueError, IndexError, AttributeError):
+            return cls()  # corrupt storage: start clean
         return tracker
 
 
-def parse_access_points(entries: list[str]) -> dict[str, str]:
+def parse_devices(entries: list[str]) -> dict[str, str]:
     """Parse "Name=host" or "host" entries into {label: host}."""
     result: dict[str, str] = {}
     for raw in entries:

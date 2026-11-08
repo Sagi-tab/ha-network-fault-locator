@@ -24,13 +24,13 @@ def down(host="h", sent=10):
 def snap(router=None, aps=None, internet=None, dns=True, hop=None, **loss):
     s = a.Snapshot(
         router=router or up("router"),
-        access_points=aps if aps is not None else {"ap1": up("ap1"), "ap2": up("ap2")},
+        devices=aps if aps is not None else {"ap1": up("ap1"), "ap2": up("ap2")},
         internet=internet if internet is not None else [up("1.1.1.1"), up("8.8.8.8")],
         dns_ok=dns,
         hop=hop if hop is not None else a.HopResult("isp", 5, 5),
     )
     s.router_loss = loss.get("router_loss", 0.0)
-    s.access_point_loss = loss.get("ap_loss", {"ap1": 0.0, "ap2": 0.0})
+    s.device_loss = loss.get("ap_loss", {"ap1": 0.0, "ap2": 0.0})
     s.internet_loss = loss.get("internet_loss", 0.0)
     return s
 
@@ -69,9 +69,9 @@ def test_dns_only_when_internet_works():
 
 def test_mesh_down_and_degraded():
     v = a.evaluate(snap(aps={"ap1": down("ap1"), "ap2": up("ap2")}), T)
-    assert v.issues == [a.MESH_DOWN] and v.access_points_down == ["ap1"]
+    assert v.issues == [a.DEVICE_DOWN] and v.devices_down == ["ap1"]
     v = a.evaluate(snap(ap_loss={"ap1": 0.0, "ap2": 5.0}), T)
-    assert v.issues == [a.MESH_DEGRADED] and v.access_points_degraded == ["ap2"]
+    assert v.issues == [a.DEVICE_DEGRADED] and v.devices_degraded == ["ap2"]
 
 
 def test_loss_is_relative_to_router():
@@ -79,12 +79,12 @@ def test_loss_is_relative_to_router():
     s = snap(router_loss=4.0, ap_loss={"ap1": 5.0, "ap2": 4.0}, internet_loss=5.0)
     assert issues(s) == [a.HOME_DEGRADED]
     s = snap(router_loss=4.0, ap_loss={"ap1": 7.0, "ap2": 4.0}, internet_loss=4.0)
-    assert issues(s) == [a.HOME_DEGRADED, a.MESH_DEGRADED]
+    assert issues(s) == [a.HOME_DEGRADED, a.DEVICE_DEGRADED]
 
 
 def test_isp_degraded_and_ordering():
     s = snap(internet_loss=3.0, aps={"ap1": down("ap1"), "ap2": up("ap2")}, dns=False)
-    assert issues(s) == [a.DNS, a.MESH_DOWN, a.ISP_DEGRADED]
+    assert issues(s) == [a.DNS, a.DEVICE_DOWN, a.ISP_DEGRADED]
 
 
 def test_loss_window_pools_and_expires():
@@ -107,7 +107,7 @@ def test_record_samples_skips_outage_checks():
     # Access point down: same for its window
     s = snap(aps={"ap1": down("ap1"), "ap2": up("ap2")})
     a.record_samples(s, 60, rw, aw, iw)
-    assert s.access_point_loss == {"ap1": 0.0, "ap2": 0.0}
+    assert s.device_loss == {"ap1": 0.0, "ap2": 0.0}
     # Partial loss is recorded, using the best internet target
     s = snap(internet=[up(received=6), up(received=8)])
     a.record_samples(s, 90, rw, aw, iw)
@@ -119,14 +119,14 @@ def test_incident_tracker_per_issue_times():
     assert t.update(0, []) is None
     kind, inc = t.update(100, [a.ISP_LINE])
     assert kind == "started" and inc["issues"][0]["issue"] == a.ISP_LINE
-    assert t.update(130, [a.ISP_LINE, a.MESH_DEGRADED]) is None
-    assert t.update(340, [a.MESH_DEGRADED]) is None
+    assert t.update(130, [a.ISP_LINE, a.DEVICE_DEGRADED]) is None
+    assert t.update(340, [a.DEVICE_DEGRADED]) is None
     kind, inc = t.update(1000, [])
     assert kind == "resolved"
     assert inc["duration"] == 900
     by_issue = {i["issue"]: i for i in inc["issues"]}
     assert (by_issue[a.ISP_LINE]["start"], by_issue[a.ISP_LINE]["end"]) == (100, 340)
-    assert (by_issue[a.MESH_DEGRADED]["start"], by_issue[a.MESH_DEGRADED]["end"]) == (130, 1000)
+    assert (by_issue[a.DEVICE_DEGRADED]["start"], by_issue[a.DEVICE_DEGRADED]["end"]) == (130, 1000)
     assert t.since is None and t.update(1030, []) is None
 
 
@@ -139,8 +139,8 @@ def test_incident_tracker_round_trip():
     assert a.IncidentTracker.from_dict({"issues": {"bogus": [1, 2]}}).issues == {}
 
 
-def test_parse_access_points():
-    assert a.parse_access_points(["Living room=192.168.1.10", " 192.168.1.11 ", "", "=x"]) == {
+def test_parse_devices():
+    assert a.parse_devices(["Living room=192.168.1.10", " 192.168.1.11 ", "", "=x"]) == {
         "Living room": "192.168.1.10",
         "192.168.1.11": "192.168.1.11",
         "x": "x",

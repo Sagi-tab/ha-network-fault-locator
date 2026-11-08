@@ -24,11 +24,11 @@ from .analysis import (
     Snapshot,
     Verdict,
     evaluate,
-    parse_access_points,
+    parse_devices,
     record_samples,
 )
 from .const import (
-    CONF_ACCESS_POINTS,
+    CONF_DEVICES,
     CONF_DNS_HOST,
     CONF_INTERNET_TARGETS,
     CONF_LOSS_THRESHOLD,
@@ -110,9 +110,7 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
         )
         self.privileged = privileged
         self.router: str = opts[CONF_ROUTER]
-        self.access_points: dict[str, str] = parse_access_points(
-            opts.get(CONF_ACCESS_POINTS, [])
-        )
+        self.devices: dict[str, str] = parse_devices(opts.get(CONF_DEVICES, []))
         self.internet_targets: list[str] = list(
             opts.get(CONF_INTERNET_TARGETS) or DEFAULT_INTERNET_TARGETS
         )
@@ -124,7 +122,7 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
 
         window = 60 * float(opts.get(CONF_LOSS_WINDOW, DEFAULT_LOSS_WINDOW))
         self._router_window = LossWindow(window)
-        self._ap_windows = {label: LossWindow(window) for label in self.access_points}
+        self._device_windows = {label: LossWindow(window) for label in self.devices}
         self._internet_window = LossWindow(window)
 
         # Traceroute needs raw sockets; without them the ISP first hop is unknown
@@ -137,9 +135,12 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
 
     async def async_load_state(self) -> None:
         """Restore an open incident and the last ISP hop after a restart."""
-        data = await self._store.async_load() or {}
+        data = await self._store.async_load()
+        if not isinstance(data, dict):
+            data = {}
         self._tracker = IncidentTracker.from_dict(data.get("incident"))
-        self._isp_hop_address = data.get("isp_hop_address")
+        hop = data.get("isp_hop_address")
+        self._isp_hop_address = hop if isinstance(hop, str) else None
 
     def _save_state(self) -> None:
         self._store.async_delay_save(
@@ -169,7 +170,7 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
         return hop
 
     async def _async_update_data(self) -> NetworkState:
-        hosts = [self.router, *self.access_points.values(), *self.internet_targets]
+        hosts = [self.router, *self.devices.values(), *self.internet_targets]
         try:
             pings, dns_ok, hop = await asyncio.gather(
                 async_ping_hosts(hosts, self.ping_count, self.privileged),
@@ -182,15 +183,13 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
         now = dt_util.utcnow().timestamp()
         snapshot = Snapshot(
             router=pings[self.router],
-            access_points={
-                label: pings[host] for label, host in self.access_points.items()
-            },
+            devices={label: pings[host] for label, host in self.devices.items()},
             internet=[pings[host] for host in self.internet_targets],
             dns_ok=dns_ok,
             hop=hop,
         )
         record_samples(
-            snapshot, now, self._router_window, self._ap_windows, self._internet_window
+            snapshot, now, self._router_window, self._device_windows, self._internet_window
         )
         verdict = evaluate(snapshot, self.threshold)
 

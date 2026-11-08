@@ -5,7 +5,7 @@ from typing import Final
 DOMAIN: Final = "network_fault_locator"
 
 CONF_ROUTER: Final = "router"
-CONF_ACCESS_POINTS: Final = "access_points"
+CONF_DEVICES: Final = "devices"
 CONF_INTERNET_TARGETS: Final = "internet_targets"
 CONF_DNS_HOST: Final = "dns_host"
 CONF_NOTIFY_ENTITY: Final = "notify_entity"
@@ -28,6 +28,11 @@ PING_INTERVAL: Final = 0.2  # seconds between packets of one burst
 PING_TIMEOUT: Final = 1.0  # seconds to wait for each reply
 TRACE_PROBES: Final = 5
 DNS_TIMEOUT: Final = 5.0
+
+# Limits that keep a check bounded and the integration from being a traffic generator
+MAX_DEVICES: Final = 30
+MAX_INTERNET_TARGETS: Final = 5
+CHECK_MARGIN: Final = 3.0  # seconds a check needs on top of the ping bursts
 
 EVENT_INCIDENT_STARTED: Final = f"{DOMAIN}_incident_started"
 EVENT_INCIDENT_RESOLVED: Final = f"{DOMAIN}_incident_resolved"

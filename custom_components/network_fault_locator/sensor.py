@@ -56,18 +56,18 @@ async def async_setup_entry(
             available_fn=lambda: coordinator.trace_available,
         ),
     ]
-    for label, host in coordinator.access_points.items():
+    for label, host in coordinator.devices.items():
         entities.append(
             LossSensor(
-                coordinator, f"ap_{host}_loss", "access_point_loss",
-                lambda s, label=label: s.snapshot.access_point_loss.get(label),
+                coordinator, f"device_{host}_loss", "device_loss",
+                lambda s, label=label: s.snapshot.device_loss.get(label),
                 {"name": label},
             )
         )
         entities.append(
             LatencySensor(
-                coordinator, f"ap_{host}_latency", "access_point_latency",
-                lambda s, label=label: _rtt(s.snapshot.access_points[label].avg_rtt),
+                coordinator, f"device_{host}_latency", "device_latency",
+                lambda s, label=label: _rtt(s.snapshot.devices[label].avg_rtt),
                 {"name": label},
             )
         )
@@ -92,8 +92,8 @@ class StatusSensor(NetworkFaultLocatorEntity, SensorEntity):
         data = self.coordinator.data
         return {
             "issues": data.verdict.issues,
-            "access_points_down": data.verdict.access_points_down,
-            "access_points_losing_packets": data.verdict.access_points_degraded,
+            "devices_down": data.verdict.devices_down,
+            "devices_losing_packets": data.verdict.devices_degraded,
             "isp_first_hop": data.isp_hop_address,
             "incident_since": data.incident_since,
         }

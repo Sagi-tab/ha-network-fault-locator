@@ -53,10 +53,13 @@ async def async_ping_hosts(
                 received=reply.packets_received,
                 avg_rtt=reply.avg_rtt if reply.is_alive else None,
             )
-    except NameLookupError:
-        # A hostname target failed to resolve: probe one by one so the others still count
-        for host in unique:
-            results[host] = await _async_ping_one(host, count, privileged)
+    except ICMPLibError:
+        # One bad target (unresolvable name, refused address, ...) must not take the
+        # whole check down: probe one by one so the others still count
+        singles = await asyncio.gather(
+            *(_async_ping_one(host, count, privileged) for host in unique)
+        )
+        results = {r.host: r for r in singles}
     return results
 
 
@@ -69,7 +72,7 @@ async def _async_ping_one(host: str, count: int, privileged: bool) -> ProbeResul
             timeout=PING_TIMEOUT,
             privileged=privileged,
         )
-    except NameLookupError:
+    except (NameLookupError, ICMPLibError, OSError):
         return ProbeResult(host=host, sent=count, received=0)
     return ProbeResult(
         host=host,

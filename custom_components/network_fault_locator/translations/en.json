@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Network Fault Locator",
-        "description": "Watches the path from Home Assistant to your router, access points, ISP and the internet, and tells where a problem is.",
+        "description": "Watches the path from Home Assistant to your router, chosen local devices, ISP and the internet, and tells where a problem is.",
         "data": {
           "name": "Name",
           "router": "Router",
-          "access_points": "Access points",
           "internet_targets": "Internet targets",
           "dns_host": "DNS test hostname",
           "notify_entity": "Notify when an incident is resolved"
@@ -15,17 +14,29 @@
         "data_description": {
           "name": "Name of the device.",
           "router": "IP of your main router (pre-filled with the first hop Home Assistant sees).",
-          "access_points": "Mesh nodes / access points to watch, one per line: 'Name=IP' or just the IP. Optional.",
-          "internet_targets": "Public IPs that answer pings. The first one is also used for the traceroute.",
+          "internet_targets": "Public IPs that answer pings (up to 5). The first one is also used for the traceroute.",
           "dns_host": "A hostname that should always resolve.",
           "notify_entity": "Optional notify entity (e.g. Telegram or mobile app) for the incident summary."
+        }
+      },
+      "devices": {
+        "title": "Local devices to watch",
+        "description": "Pick the devices on your network to watch, e.g. mesh access points, extenders or switches. The list comes from what Home Assistant already knows about your network (nothing is scanned). To add one that isn't listed, type 'Name=IP' or just the IP and press Enter. Up to 30; you can leave it empty.",
+        "data": {
+          "devices": "Devices"
+        },
+        "data_description": {
+          "devices": "A problem reaching these is reported as a local device issue, separately from the router and the ISP."
         }
       }
     },
     "error": {
-      "invalid_host": "Not a valid IP address or hostname.",
-      "invalid_access_point": "Use 'Name=IP' or just an IP address / hostname per line.",
-      "no_targets": "Add at least one internet target."
+      "invalid_host": "Not a valid unicast IP address or hostname.",
+      "invalid_device": "Use 'Name=IP' or just an IP address / hostname, with unique names.",
+      "no_targets": "Add at least one internet target.",
+      "too_many_targets": "Use at most 5 internet targets.",
+      "too_many_devices": "Watch at most 30 devices.",
+      "check_too_long": "Too short for this many pings: an unreachable host takes about 1 s per ping. Increase the interval or lower the pings per check."
     },
     "abort": {
       "already_configured": "This router is already monitored.",
@@ -38,7 +49,6 @@
         "title": "Network Fault Locator options",
         "data": {
           "router": "Router",
-          "access_points": "Access points",
           "internet_targets": "Internet targets",
           "dns_host": "DNS test hostname",
           "notify_entity": "Notify when an incident is resolved",
@@ -50,22 +60,34 @@
         },
         "data_description": {
           "router": "IP of your main router (pre-filled with the first hop Home Assistant sees).",
-          "access_points": "Mesh nodes / access points to watch, one per line: 'Name=IP' or just the IP. Optional.",
-          "internet_targets": "Public IPs that answer pings. The first one is also used for the traceroute.",
+          "internet_targets": "Public IPs that answer pings (up to 5). The first one is also used for the traceroute.",
           "dns_host": "A hostname that should always resolve.",
           "notify_entity": "Optional notify entity (e.g. Telegram or mobile app) for the incident summary.",
           "ping_count": "Packets sent to each target per check.",
-          "scan_interval": "Seconds between checks.",
+          "scan_interval": "Seconds between checks. Must be longer than the pings per check (in seconds) + 3.",
           "loss_window": "Packet loss is pooled over this many minutes.",
           "loss_threshold": "Loss (in percentage points above the loss to the router) that counts as a problem.",
           "min_incident": "Shorter incidents fire no 'resolved' event or notification."
         }
+      },
+      "devices": {
+        "title": "Local devices to watch",
+        "description": "Pick the devices on your network to watch, e.g. mesh access points, extenders or switches. The list comes from what Home Assistant already knows about your network (nothing is scanned). To add one that isn't listed, type 'Name=IP' or just the IP and press Enter. Up to 30; you can leave it empty.",
+        "data": {
+          "devices": "Devices"
+        },
+        "data_description": {
+          "devices": "A problem reaching these is reported as a local device issue, separately from the router and the ISP."
+        }
       }
     },
     "error": {
-      "invalid_host": "Not a valid IP address or hostname.",
-      "invalid_access_point": "Use 'Name=IP' or just an IP address / hostname per line.",
-      "no_targets": "Add at least one internet target."
+      "invalid_host": "Not a valid unicast IP address or hostname.",
+      "invalid_device": "Use 'Name=IP' or just an IP address / hostname, with unique names.",
+      "no_targets": "Add at least one internet target.",
+      "too_many_targets": "Use at most 5 internet targets.",
+      "too_many_devices": "Watch at most 30 devices.",
+      "check_too_long": "Too short for this many pings: an unreachable host takes about 1 s per ping. Increase the interval or lower the pings per check."
     }
   },
   "entity": {
@@ -79,7 +101,7 @@
       "dns": {
         "name": "DNS"
       },
-      "access_point": {
+      "device": {
         "name": "{name}"
       }
     },
@@ -93,9 +115,9 @@
           "isp_upstream": "ISP backbone down",
           "isp_down": "ISP / internet down",
           "dns": "DNS failure",
-          "mesh_down": "Access point down",
+          "device_down": "Local device down",
           "home_degraded": "Home network packet loss",
-          "mesh_degraded": "Mesh packet loss",
+          "device_degraded": "Local device packet loss",
           "isp_degraded": "ISP packet loss"
         }
       },
@@ -117,10 +139,10 @@
       "isp_first_hop_loss": {
         "name": "ISP first hop packet loss"
       },
-      "access_point_loss": {
+      "device_loss": {
         "name": "{name} packet loss"
       },
-      "access_point_latency": {
+      "device_latency": {
         "name": "{name} latency"
       }
     }

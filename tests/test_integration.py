@@ -19,6 +19,7 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
 from homeassistant import config_entries  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
+from homeassistant.helpers import device_registry as dr  # noqa: E402
 from homeassistant.util import dt as dt_util  # noqa: E402
 
 from custom_components.network_fault_locator.analysis import HopResult, ProbeResult  # noqa: E402
@@ -34,7 +35,7 @@ ROUTER, AP1, AP2, NET1, NET2 = "192.168.1.1", "192.168.1.10", "192.168.1.11", "1
 
 OPTIONS = {
     "router": ROUTER,
-    "access_points": [f"Living room={AP1}", AP2],
+    "devices": [f"Living room={AP1}", AP2],
     "internet_targets": [NET1, NET2],
     "dns_host": "google.com",
     "notify_entity": "notify.phone",
@@ -101,7 +102,19 @@ async def test_config_flow(hass: HomeAssistant) -> None:
         patch(f"{PKG}.config_flow.async_detect_privileged", AsyncMock(return_value=True)),
         patch(f"{PKG}.config_flow.async_detect_router", AsyncMock(return_value=ROUTER)),
         patch(f"{PKG}.async_setup_entry", AsyncMock(return_value=True)),
+        patch(
+            f"{PKG}.discovery.read_arp_table",
+            return_value={AP1: "aa:bb:cc:dd:ee:01", AP2: "aa:bb:cc:dd:ee:02", ROUTER: "aa:bb:cc:dd:ee:00"},
+        ),
     ):
+        # A device Home Assistant knows by MAC gets its name in the picker
+        cfg = MockConfigEntry(domain="test")
+        cfg.add_to_hass(hass)
+        dr.async_get(hass).async_get_or_create(
+            config_entry_id=cfg.entry_id,
+            connections={(dr.CONNECTION_NETWORK_MAC, "AA:BB:CC:DD:EE:01")},
+            name="Mesh node living room",
+        )
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
@@ -116,19 +129,33 @@ async def test_config_flow(hass: HomeAssistant) -> None:
         )
         assert bad["errors"] == {"router": "invalid_host"}
 
-        done = await hass.config_entries.flow.async_configure(
+        devices = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "name": "Net",
-                "router": ROUTER,
-                "access_points": [f"Living room={AP1}", " "],
-                "internet_targets": [NET1, NET2],
-                "dns_host": "google.com",
-            },
+            {"name": "Net", "router": ROUTER, "internet_targets": [NET1, NET2], "dns_host": "google.com"},
+        )
+        assert devices["step_id"] == "devices"
+        offered = {
+            o["value"]: o["label"]
+            for o in devices["data_schema"].schema["devices"].config["options"]
+        }
+        # Router excluded; known device named; unknown one shown with its MAC
+        assert offered == {
+            f"Mesh node living room={AP1}": f"Mesh node living room ({AP1})",
+            AP2: f"{AP2} (aa:bb:cc:dd:ee:02)",
+        }
+
+        bad = await hass.config_entries.flow.async_configure(
+            devices["flow_id"], {"devices": ["Broken=not a host!"]}
+        )
+        assert bad["errors"] == {"devices": "invalid_device"}
+
+        done = await hass.config_entries.flow.async_configure(
+            devices["flow_id"], {"devices": [f"Mesh node living room={AP1}", "Switch=192.168.1.5", " "]}
         )
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert done["title"] == "Net"
-    assert done["options"]["access_points"] == [f"Living room={AP1}"]
+    assert done["options"]["devices"] == [f"Mesh node living room={AP1}", "Switch=192.168.1.5"]
+    assert done["options"]["internet_targets"] == [NET1, NET2]
     assert done["options"]["ping_count"] == 10
 
 
@@ -172,8 +199,8 @@ async def test_verdicts(hass: HomeAssistant, net: FakeNetwork, freezer) -> None:
     net.received[AP1] = 0
     await _tick(hass, freezer)
     status = hass.states.get("sensor.network_status")
-    assert status.state == "mesh_down"
-    assert status.attributes["access_points_down"] == ["Living room"]
+    assert status.state == "device_down"
+    assert status.attributes["devices_down"] == ["Living room"]
 
     net.received[AP1] = 10
     net.received[ROUTER] = 0
@@ -186,8 +213,8 @@ async def test_mesh_packet_loss(hass: HomeAssistant, net: FakeNetwork, freezer) 
     net.received[AP2] = 8  # 20% loss on one access point, router clean
     await _tick(hass, freezer)
     status = hass.states.get("sensor.network_status")
-    assert status.state == "mesh_degraded"
-    assert status.attributes["access_points_losing_packets"] == [AP2]
+    assert status.state == "device_degraded"
+    assert status.attributes["devices_losing_packets"] == [AP2]
     assert float(hass.states.get("sensor.network_192_168_1_11_packet_loss").state) == 10.0
 
 
@@ -229,16 +256,77 @@ async def test_short_incident_not_reported(hass: HomeAssistant, net: FakeNetwork
     assert resolved == []
 
 
-async def test_options_reload(hass: HomeAssistant, net: FakeNetwork) -> None:
+async def test_options_flow(hass: HomeAssistant, net: FakeNetwork) -> None:
     entry = await _setup(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {**{k: v for k, v in OPTIONS.items() if k != "notify_entity"}, "access_points": [AP2]},
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "init"
+    network = {k: v for k, v in OPTIONS.items() if k not in ("devices", "notify_entity")}
+
+    too_long = await hass.config_entries.options.async_configure(
+        result["flow_id"], {**network, "ping_count": 30, "scan_interval": 20}
     )
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert too_long["errors"] == {"scan_interval": "check_too_long"}
+
+    with patch(f"{PKG}.discovery.read_arp_table", return_value={}):
+        devices = await hass.config_entries.options.async_configure(result["flow_id"], network)
+        assert devices["step_id"] == "devices"
+        # Currently watched devices stay selectable even when not discovered
+        assert devices["data_schema"].schema["devices"].config["options"][0] == {
+            "value": f"Living room={AP1}", "label": f"Living room ({AP1})"
+        }
+        done = await hass.config_entries.options.async_configure(devices["flow_id"], {"devices": [AP2]})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    assert "notify_entity" not in entry.options
+    assert "notify_entity" not in entry.options  # clearing the notify field sticks
+    assert entry.options["devices"] == [AP2]
     assert hass.states.get("binary_sensor.network_192_168_1_11").state == "on"
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_one_bad_target_does_not_break_checks(hass: HomeAssistant) -> None:
+    """A target icmplib refuses only marks itself down (real probe code, mocked icmplib)."""
+    from icmplib import ICMPLibError
+
+    from custom_components.network_fault_locator import probe
+
+    class Reply:
+        def __init__(self, address):
+            self.address, self.packets_sent, self.packets_received = address, 3, 3
+            self.avg_rtt, self.is_alive = 1.0, True
+
+    async def single(host, **kwargs):
+        if host == "bad":
+            raise ICMPLibError("refused")
+        return Reply(host)
+
+    with (
+        patch.object(probe, "async_multiping", AsyncMock(side_effect=ICMPLibError("refused"))),
+        patch.object(probe, "async_ping", side_effect=single),
+    ):
+        results = await probe.async_ping_hosts([ROUTER, "bad", NET1], 3, True)
+    assert results[ROUTER].alive and results[NET1].alive
+    assert not results["bad"].alive and results["bad"].sent == 3
+
+
+async def test_corrupt_storage_is_ignored(hass: HomeAssistant, net: FakeNetwork, hass_storage) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Network", data={"name": "Network"}, options=OPTIONS)
+    hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
+        "version": 1, "key": f"{DOMAIN}.{entry.entry_id}",
+        "data": {"incident": {"since": "garbage", "issues": {"isp_line": 5}}, "isp_hop_address": 42},
+    }
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.network_status").state == "ok"
+
+
+async def test_diagnostics_redact_isp_hop(hass: HomeAssistant, net: FakeNetwork) -> None:
+    from custom_components.network_fault_locator.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = await _setup(hass)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    text = str(diag)
+    assert "203.0.113.1" not in text and "notify.phone" not in text
+    assert diag["last_check"]["isp_hop_address"] == "**REDACTED**"

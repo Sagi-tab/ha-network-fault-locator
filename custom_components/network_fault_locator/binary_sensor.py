@@ -1,4 +1,4 @@
-"""Reachability binary sensors: router, each access point, internet and DNS."""
+"""Reachability binary sensors: router, each local device, internet and DNS."""
 
 from __future__ import annotations
 
@@ -40,13 +40,13 @@ async def async_setup_entry(
             lambda s: {"host": coordinator.dns_host},
         ),
     ]
-    for label, host in coordinator.access_points.items():
+    for label, host in coordinator.devices.items():
         entities.append(
             ReachabilitySensor(
                 coordinator,
-                f"ap_{host}",
-                "access_point",
-                lambda s, label=label: s.snapshot.access_points[label].alive,
+                f"device_{host}",
+                "device",
+                lambda s, label=label: s.snapshot.devices[label].alive,
                 lambda s, host=host: {"host": host},
                 {"name": label},
             )
