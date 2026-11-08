@@ -1,0 +1,128 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Network Fault Locator",
+        "description": "Watches the path from Home Assistant to your router, access points, ISP and the internet, and tells where a problem is.",
+        "data": {
+          "name": "Name",
+          "router": "Router",
+          "access_points": "Access points",
+          "internet_targets": "Internet targets",
+          "dns_host": "DNS test hostname",
+          "notify_entity": "Notify when an incident is resolved"
+        },
+        "data_description": {
+          "name": "Name of the device.",
+          "router": "IP of your main router (pre-filled with the first hop Home Assistant sees).",
+          "access_points": "Mesh nodes / access points to watch, one per line: 'Name=IP' or just the IP. Optional.",
+          "internet_targets": "Public IPs that answer pings. The first one is also used for the traceroute.",
+          "dns_host": "A hostname that should always resolve.",
+          "notify_entity": "Optional notify entity (e.g. Telegram or mobile app) for the incident summary."
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Not a valid IP address or hostname.",
+      "invalid_access_point": "Use 'Name=IP' or just an IP address / hostname per line.",
+      "no_targets": "Add at least one internet target."
+    },
+    "abort": {
+      "already_configured": "This router is already monitored.",
+      "no_icmp": "Home Assistant is not allowed to send ICMP pings on this system."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Network Fault Locator options",
+        "data": {
+          "router": "Router",
+          "access_points": "Access points",
+          "internet_targets": "Internet targets",
+          "dns_host": "DNS test hostname",
+          "notify_entity": "Notify when an incident is resolved",
+          "ping_count": "Pings per check",
+          "scan_interval": "Check interval",
+          "loss_window": "Packet loss window",
+          "loss_threshold": "Packet loss threshold",
+          "min_incident": "Minimum incident length to report"
+        },
+        "data_description": {
+          "router": "IP of your main router (pre-filled with the first hop Home Assistant sees).",
+          "access_points": "Mesh nodes / access points to watch, one per line: 'Name=IP' or just the IP. Optional.",
+          "internet_targets": "Public IPs that answer pings. The first one is also used for the traceroute.",
+          "dns_host": "A hostname that should always resolve.",
+          "notify_entity": "Optional notify entity (e.g. Telegram or mobile app) for the incident summary.",
+          "ping_count": "Packets sent to each target per check.",
+          "scan_interval": "Seconds between checks.",
+          "loss_window": "Packet loss is pooled over this many minutes.",
+          "loss_threshold": "Loss (in percentage points above the loss to the router) that counts as a problem.",
+          "min_incident": "Shorter incidents fire no 'resolved' event or notification."
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Not a valid IP address or hostname.",
+      "invalid_access_point": "Use 'Name=IP' or just an IP address / hostname per line.",
+      "no_targets": "Add at least one internet target."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "router": {
+        "name": "Router"
+      },
+      "internet": {
+        "name": "Internet"
+      },
+      "dns": {
+        "name": "DNS"
+      },
+      "access_point": {
+        "name": "{name}"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "ok": "OK",
+          "home_network": "Home network down",
+          "isp_line": "ISP line down",
+          "isp_upstream": "ISP backbone down",
+          "isp_down": "ISP / internet down",
+          "dns": "DNS failure",
+          "mesh_down": "Access point down",
+          "home_degraded": "Home network packet loss",
+          "mesh_degraded": "Mesh packet loss",
+          "isp_degraded": "ISP packet loss"
+        }
+      },
+      "router_loss": {
+        "name": "Router packet loss"
+      },
+      "router_latency": {
+        "name": "Router latency"
+      },
+      "internet_loss": {
+        "name": "Internet packet loss"
+      },
+      "internet_latency": {
+        "name": "Internet latency"
+      },
+      "isp_first_hop": {
+        "name": "ISP first hop"
+      },
+      "isp_first_hop_loss": {
+        "name": "ISP first hop packet loss"
+      },
+      "access_point_loss": {
+        "name": "{name} packet loss"
+      },
+      "access_point_latency": {
+        "name": "{name} latency"
+      }
+    }
+  }
+}

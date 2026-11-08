@@ -1,0 +1,14 @@
+{
+  "domain": "network_fault_locator",
+  "name": "Network Fault Locator",
+  "codeowners": ["@sagi-tab"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/sagi-tab/ha-network-fault-locator",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/sagi-tab/ha-network-fault-locator/issues",
+  "loggers": ["icmplib"],
+  "requirements": ["icmplib==3.0.4"],
+  "version": "0.1.0"
+}

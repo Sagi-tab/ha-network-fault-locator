@@ -1,0 +1,52 @@
+{
+  "entity": {
+    "sensor": {
+      "status": {
+        "default": "mdi:lan-check",
+        "state": {
+          "home_network": "mdi:lan-disconnect",
+          "isp_line": "mdi:web-off",
+          "isp_upstream": "mdi:web-off",
+          "isp_down": "mdi:web-off",
+          "dns": "mdi:dns",
+          "mesh_down": "mdi:access-point-off",
+          "home_degraded": "mdi:lan-pending",
+          "mesh_degraded": "mdi:access-point-network-off",
+          "isp_degraded": "mdi:web-remove"
+        }
+      },
+      "router_loss": {
+        "default": "mdi:router-network"
+      },
+      "internet_loss": {
+        "default": "mdi:web-remove"
+      },
+      "isp_first_hop": {
+        "default": "mdi:router-network"
+      },
+      "isp_first_hop_loss": {
+        "default": "mdi:router-network"
+      },
+      "access_point_loss": {
+        "default": "mdi:access-point-network"
+      },
+      "access_point_latency": {
+        "default": "mdi:access-point"
+      }
+    },
+    "binary_sensor": {
+      "router": {
+        "default": "mdi:router-wireless"
+      },
+      "internet": {
+        "default": "mdi:web"
+      },
+      "dns": {
+        "default": "mdi:dns"
+      },
+      "access_point": {
+        "default": "mdi:access-point"
+      }
+    }
+  }
+}
