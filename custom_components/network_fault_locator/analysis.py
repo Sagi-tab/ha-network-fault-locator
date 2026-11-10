@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 # Issue codes, most severe first. The status sensor shows the first active one.
 HOME_NETWORK = "home_network"
@@ -38,6 +39,14 @@ ISSUES: tuple[str, ...] = (
     ISP_DEGRADED,
 )
 OK = "ok"
+
+# Packet-loss issues whose times come from the lossy checks themselves
+DEGRADED_ISSUES = frozenset({HOME_DEGRADED, DEVICE_DEGRADED, ISP_DEGRADED})
+
+# A packet-loss issue needs loss in at least this many checks within the window:
+# one short burst (a few lost packets in a single check) is not a problem worth
+# reporting, and would otherwise keep the verdict up for the whole window.
+MIN_LOSSY_CHECKS = 2
 
 ISSUE_LABELS: dict[str, str] = {
     HOME_NETWORK: "Home network (router unreachable)",
@@ -85,6 +94,14 @@ class HopResult:
         return self.received > 0
 
 
+class LossSpan(NamedTuple):
+    """The checks in a window that lost packets."""
+
+    count: int
+    first: float
+    last: float
+
+
 class LossWindow:
     """Pooled packet loss over a sliding time window."""
 
@@ -109,6 +126,12 @@ class LossWindow:
         received = sum(r for _, _, r in self._samples)
         return round(100.0 * (sent - received) / sent, 2)
 
+    def lossy(self, now: float) -> LossSpan | None:
+        """How many checks in the window lost packets, and when; None if none did."""
+        self._prune(now)
+        times = [ts for ts, sent, received in self._samples if received < sent]
+        return LossSpan(len(times), times[0], times[-1]) if times else None
+
 
 @dataclass
 class Snapshot:
@@ -122,6 +145,9 @@ class Snapshot:
     router_loss: float | None = None
     device_loss: dict[str, float | None] = field(default_factory=dict)
     internet_loss: float | None = None
+    router_lossy: LossSpan | None = None
+    device_lossy: dict[str, LossSpan | None] = field(default_factory=dict)
+    internet_lossy: LossSpan | None = None
 
     @property
     def internet_alive(self) -> bool:
@@ -140,6 +166,8 @@ class Verdict:
     issues: list[str]
     devices_down: list[str]
     devices_degraded: list[str]
+    # Packet-loss issue -> when its lossy checks were (first, last)
+    loss_spans: dict[str, LossSpan] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -173,6 +201,15 @@ def record_samples(
         label: window.loss(now) for label, window in device_windows.items()
     }
     snapshot.internet_loss = internet_window.loss(now)
+    snapshot.router_lossy = router_window.lossy(now)
+    snapshot.device_lossy = {
+        label: window.lossy(now) for label, window in device_windows.items()
+    }
+    snapshot.internet_lossy = internet_window.lossy(now)
+
+
+def _repeated(span: LossSpan | None) -> bool:
+    return span is not None and span.count >= MIN_LOSSY_CHECKS
 
 
 def evaluate(snapshot: Snapshot, threshold: float) -> Verdict:
@@ -196,34 +233,47 @@ def evaluate(snapshot: Snapshot, threshold: float) -> Verdict:
     if down:
         issues.append(DEVICE_DOWN)
 
+    spans: dict[str, LossSpan] = {}
     base = snapshot.router_loss or 0.0
-    if base >= threshold:
+    if base >= threshold and _repeated(snapshot.router_lossy):
         issues.append(HOME_DEGRADED)
+        spans[HOME_DEGRADED] = snapshot.router_lossy
 
     degraded = [
         label
         for label, loss in snapshot.device_loss.items()
-        if loss is not None and label not in down and loss - base >= threshold
+        if loss is not None
+        and label not in down
+        and loss - base >= threshold
+        and _repeated(snapshot.device_lossy.get(label))
     ]
     if degraded:
         issues.append(DEVICE_DEGRADED)
+        lossy = [snapshot.device_lossy[label] for label in degraded]
+        spans[DEVICE_DEGRADED] = LossSpan(
+            max(s.count for s in lossy), min(s.first for s in lossy), max(s.last for s in lossy)
+        )
 
     if (
         internet
         and snapshot.internet_loss is not None
         and snapshot.internet_loss - base >= threshold
+        and _repeated(snapshot.internet_lossy)
     ):
         issues.append(ISP_DEGRADED)
+        spans[ISP_DEGRADED] = snapshot.internet_lossy
 
     issues.sort(key=ISSUES.index)
-    return Verdict(issues, down, degraded)
+    return Verdict(issues, down, degraded, spans)
 
 
 class IncidentTracker:
     """Tracks one incident: from the first issue until everything is OK again.
 
     Each issue keeps the first and last time it was active, so a report can say
-    e.g. "ISP line: 4 min from 23:16; device packet loss: 16 min from 23:18".
+    e.g. "ISP line: 4 min from 23:16". Packet-loss issues keep the times of their
+    lossy checks instead: their verdict stays up while the loss is inside the
+    window, which says nothing about when packets were actually lost.
     """
 
     def __init__(self) -> None:
@@ -231,15 +281,28 @@ class IncidentTracker:
         self.issues: dict[str, list[float]] = {}  # code -> [first, last]
         self.active: list[str] = []
 
-    def update(self, now: float, issues: list[str]) -> tuple[str, dict] | None:
+    def update(
+        self,
+        now: float,
+        issues: list[str],
+        loss_spans: dict[str, LossSpan] | None = None,
+    ) -> tuple[str, dict] | None:
         """Feed the current issues. Returns ("started" | "resolved", incident) or None."""
+        loss_spans = loss_spans or {}
         for code in self.active:
-            self.issues[code][1] = now
+            if code not in DEGRADED_ISSUES:
+                self.issues[code][1] = now
         started = self.since is None and bool(issues)
         if started:
             self.since = now
         for code in issues:
-            self.issues.setdefault(code, [now, now])
+            span = loss_spans.get(code)
+            if code in DEGRADED_ISSUES and span is not None:
+                entry = self.issues.setdefault(code, [span.first, span.last])
+                entry[0] = min(entry[0], span.first)
+                entry[1] = max(entry[1], span.last)
+            else:
+                self.issues.setdefault(code, [now, now])
         self.active = list(issues)
 
         if started:
@@ -251,11 +314,20 @@ class IncidentTracker:
         return None
 
     def summary(self, now: float) -> dict:
+        """The incident so far.
+
+        ``start``/``end``/``duration`` cover when something was actually wrong
+        (for packet loss: its first to last lossy check); ``active_duration`` is
+        how long the verdict was up, which is what a minimum length applies to.
+        """
         since = self.since if self.since is not None else now
+        start = min([since, *(first for first, _ in self.issues.values())])
+        end = max([start, *(last for _, last in self.issues.values())])
         return {
-            "start": since,
-            "end": now,
-            "duration": round(now - since),
+            "start": start,
+            "end": end,
+            "duration": round(end - start),
+            "active_duration": round(now - since),
             "issues": [
                 {
                     "issue": code,
@@ -263,6 +335,7 @@ class IncidentTracker:
                     "start": first,
                     "end": last,
                     "duration": round(last - first),
+                    "packet_loss": code in DEGRADED_ISSUES,
                 }
                 for code, (first, last) in sorted(
                     self.issues.items(), key=lambda item: item[1][0]

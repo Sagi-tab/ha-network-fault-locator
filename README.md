@@ -29,6 +29,10 @@ sliding window (default 10 min) and loss to a local device or the internet only 
 never blamed on them. Checks taken during a hard outage are left out of the
 loss windows, so an outage isn't followed by minutes of fake "packet loss".
 
+A packet-loss verdict also needs loss in **at least two checks** within the window: one short
+burst (a few packets lost in a single check) isn't reported. The incident report says when the
+packets were lost (first to last lossy check), not how long the verdict stayed up.
+
 ### Verdicts
 
 `sensor.<name>_status` shows the most severe current issue; the `issues` attribute lists all of them.

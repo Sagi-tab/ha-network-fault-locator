@@ -32,7 +32,19 @@ def snap(router=None, aps=None, internet=None, dns=True, hop=None, **loss):
     s.router_loss = loss.get("router_loss", 0.0)
     s.device_loss = loss.get("ap_loss", {"ap1": 0.0, "ap2": 0.0})
     s.internet_loss = loss.get("internet_loss", 0.0)
+    # Unless given, any loss counts as repeated (2 lossy checks, 30 s apart)
+    def lossy(value):
+        return REPEATED if value else None
+    s.router_lossy = loss.get("router_lossy", lossy(s.router_loss))
+    s.device_lossy = loss.get(
+        "ap_lossy", {label: lossy(v) for label, v in s.device_loss.items()}
+    )
+    s.internet_lossy = loss.get("internet_lossy", lossy(s.internet_loss))
     return s
+
+
+REPEATED = a.LossSpan(2, 100.0, 130.0)
+BURST = a.LossSpan(1, 100.0, 100.0)
 
 
 def issues(s):
@@ -119,15 +131,65 @@ def test_incident_tracker_per_issue_times():
     assert t.update(0, []) is None
     kind, inc = t.update(100, [a.ISP_LINE])
     assert kind == "started" and inc["issues"][0]["issue"] == a.ISP_LINE
-    assert t.update(130, [a.ISP_LINE, a.DEVICE_DEGRADED]) is None
-    assert t.update(340, [a.DEVICE_DEGRADED]) is None
+    dev = a.DEVICE_DEGRADED
+    assert t.update(130, [a.ISP_LINE, dev], {dev: a.LossSpan(2, 120, 130)}) is None
+    assert t.update(340, [dev], {dev: a.LossSpan(4, 120, 330)}) is None
+    # The packet-loss verdict stays up while the loss is in the window...
+    assert t.update(700, [dev], {dev: a.LossSpan(2, 300, 330)}) is None
     kind, inc = t.update(1000, [])
     assert kind == "resolved"
-    assert inc["duration"] == 900
     by_issue = {i["issue"]: i for i in inc["issues"]}
+    # ...but its times are the lossy checks: 120-330, not 130-1000
+    assert (by_issue[dev]["start"], by_issue[dev]["end"]) == (120, 330)
+    assert by_issue[dev]["packet_loss"] is True
+    # The outage keeps when it was seen: until the check where it cleared
     assert (by_issue[a.ISP_LINE]["start"], by_issue[a.ISP_LINE]["end"]) == (100, 340)
-    assert (by_issue[a.DEVICE_DEGRADED]["start"], by_issue[a.DEVICE_DEGRADED]["end"]) == (130, 1000)
+    assert by_issue[a.ISP_LINE]["packet_loss"] is False
+    assert (inc["start"], inc["end"], inc["duration"]) == (100, 340, 240)
+    assert inc["active_duration"] == 900  # what the minimum length applies to
     assert t.since is None and t.update(1030, []) is None
+
+
+def test_packet_loss_incident_starts_at_first_lossy_check():
+    t = a.IncidentTracker()
+    kind, inc = t.update(700, [a.ISP_DEGRADED], {a.ISP_DEGRADED: a.LossSpan(2, 640, 670)})
+    assert kind == "started"
+    kind, inc = t.update(1300, [])
+    assert (inc["start"], inc["end"], inc["duration"]) == (640, 670, 30)
+    assert inc["active_duration"] == 600
+
+
+def test_single_burst_is_not_packet_loss():
+    """One check losing packets (this morning's 08:11 blip) isn't an issue."""
+    assert issues(snap(internet_loss=3.68, internet_lossy=BURST)) == []
+    assert issues(snap(router_loss=4.0, router_lossy=BURST)) == []
+    s = snap(ap_loss={"ap1": 0.0, "ap2": 5.0}, ap_lossy={"ap1": None, "ap2": BURST})
+    assert issues(s) == []
+    v = a.evaluate(snap(internet_loss=3.68, internet_lossy=REPEATED), T)
+    assert v.issues == [a.ISP_DEGRADED]
+    assert v.loss_spans == {a.ISP_DEGRADED: REPEATED}
+
+
+def test_device_loss_span_covers_all_degraded_devices():
+    s = snap(
+        ap_loss={"ap1": 6.0, "ap2": 5.0},
+        ap_lossy={"ap1": a.LossSpan(2, 100, 160), "ap2": a.LossSpan(3, 40, 130)},
+    )
+    v = a.evaluate(s, T)
+    assert v.devices_degraded == ["ap1", "ap2"]
+    assert v.loss_spans[a.DEVICE_DEGRADED] == a.LossSpan(3, 40, 160)
+
+
+def test_loss_window_lossy_checks():
+    w = a.LossWindow(600)
+    assert w.lossy(0) is None
+    w.add(0, 10, 10)
+    w.add(30, 10, 7)
+    w.add(60, 10, 10)
+    w.add(90, 10, 9)
+    assert w.lossy(90) == a.LossSpan(2, 30, 90)
+    assert w.lossy(640) == a.LossSpan(1, 90, 90)  # the first lossy check expired
+    assert w.lossy(1000) is None
 
 
 def test_incident_tracker_round_trip():

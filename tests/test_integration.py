@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -209,13 +210,52 @@ async def test_verdicts(hass: HomeAssistant, net: FakeNetwork, freezer) -> None:
 
 
 async def test_mesh_packet_loss(hass: HomeAssistant, net: FakeNetwork, freezer) -> None:
-    await _setup(hass)
     net.received[AP2] = 8  # 20% loss on one access point, router clean
-    await _tick(hass, freezer)
+    await _setup(hass)  # first lossy check
+    assert hass.states.get("sensor.network_status").state == "ok"  # one check isn't enough
+    await _tick(hass, freezer)  # second lossy check
     status = hass.states.get("sensor.network_status")
     assert status.state == "device_degraded"
     assert status.attributes["devices_losing_packets"] == [AP2]
-    assert float(hass.states.get("sensor.network_192_168_1_11_packet_loss").state) == 10.0
+    assert float(hass.states.get("sensor.network_192_168_1_11_packet_loss").state) == 20.0
+
+
+async def test_packet_loss_burst_and_report(hass: HomeAssistant, net: FakeNetwork, freezer) -> None:
+    """A one-check burst raises nothing; repeated loss reports when it happened."""
+    started = async_capture_events(hass, EVENT_INCIDENT_STARTED)
+    resolved = async_capture_events(hass, EVENT_INCIDENT_RESOLVED)
+    notify_calls = async_mock_service(hass, "notify", "send_message")
+    await _setup(hass)
+
+    net.received[NET1] = net.received[NET2] = 3  # one bad check on both targets
+    await _tick(hass, freezer)
+    net.received[NET1] = net.received[NET2] = 10
+    for _ in range(3):
+        await _tick(hass, freezer)
+    assert hass.states.get("sensor.network_status").state == "ok"
+    assert float(hass.states.get("sensor.network_internet_packet_loss").state) > 2
+    assert started == []
+
+    net.received[NET1] = net.received[NET2] = 6  # now loss in two more checks
+    await _tick(hass, freezer)
+    await _tick(hass, freezer)
+    net.received[NET1] = net.received[NET2] = 10
+    await _tick(hass, freezer)
+    assert hass.states.get("sensor.network_status").state == "isp_degraded"
+    assert started[0].data["issues"] == ["isp_degraded"]
+
+    for _ in range(25):  # until the lossy checks leave the 10-minute window
+        await _tick(hass, freezer)
+    assert hass.states.get("sensor.network_status").state == "ok"
+    incident = resolved[0].data
+    item = incident["issues"][0]
+    assert item["issue"] == "isp_degraded" and item["packet_loss"] is True
+    # The report covers the lossy checks (the first burst through the last
+    # loss, about 2.5 min), not the ~13 minutes the verdict was up
+    assert 120 <= incident["duration"] <= 160
+    assert incident["active_duration"] > 600
+    assert re.search(r"^• ISP packet loss: \d\d:\d\d–\d\d:\d\d$", incident["summary"], re.M)
+    assert len(notify_calls) == 1
 
 
 async def test_incident_events_and_notify(hass: HomeAssistant, net: FakeNetwork, freezer) -> None:

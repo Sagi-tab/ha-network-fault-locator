@@ -73,16 +73,33 @@ def _local_hm(ts: float) -> str:
     return dt_util.as_local(datetime.fromtimestamp(ts, tz=UTC)).strftime("%H:%M")
 
 
+def _minutes(seconds: float) -> str:
+    return "under a minute" if seconds < 60 else f"{round(seconds / 60)} min"
+
+
+def _span(start: float, end: float) -> str:
+    first, last = _local_hm(start), _local_hm(end)
+    return f"at {first}" if first == last else f"{first}–{last}"
+
+
 def format_incident(incident: dict[str, Any]) -> str:
-    """Human-readable incident summary, one line per issue plus a total."""
-    lines = [
-        f"• {item['label']}: {max(round(item['duration'] / 60), 1)} min from "
-        f"{_local_hm(item['start'])}"
-        for item in incident["issues"]
-    ]
+    """Human-readable incident summary, one line per issue plus a total.
+
+    Outages say how long they lasted; packet loss says when packets were lost
+    (its first to last lossy check).
+    """
+    lines = []
+    for item in incident["issues"]:
+        if item.get("packet_loss"):
+            lines.append(f"• {item['label']}: {_span(item['start'], item['end'])}")
+        else:
+            lines.append(
+                f"• {item['label']}: {max(round(item['duration'] / 60), 1)} min from "
+                f"{_local_hm(item['start'])}"
+            )
     lines.append(
-        f"Total: {round(incident['duration'] / 60)} min "
-        f"({_local_hm(incident['start'])}–{_local_hm(incident['end'])})"
+        f"Total: {_minutes(incident['duration'])} "
+        f"({_span(incident['start'], incident['end'])})"
     )
     return "\n".join(lines)
 
@@ -194,7 +211,7 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
         verdict = evaluate(snapshot, self.threshold)
 
         self._handle_hop(hop)
-        event = self._tracker.update(now, verdict.issues)
+        event = self._tracker.update(now, verdict.issues, verdict.loss_spans)
         if event is not None:
             self._handle_incident_event(*event)
         self._save_state()
@@ -233,7 +250,9 @@ class NetworkFaultLocatorCoordinator(DataUpdateCoordinator[NetworkState]):
                 {**base, "issues": [i["issue"] for i in incident["issues"]]},
             )
             return
-        if incident["duration"] < self.min_incident:
+        # How long the verdict was up decides whether to report, not the loss
+        # span: two lossy checks are 30 s apart but still a real problem.
+        if incident["active_duration"] < self.min_incident:
             _LOGGER.debug("Ignoring short incident: %s", incident)
             return
         summary = format_incident(incident)
